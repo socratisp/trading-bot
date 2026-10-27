@@ -80,6 +80,8 @@ class Bot:
             self.last_candle[pair] = candles[-1]["start"]
 
             setup = strategy.find_setup(pair, candles, s)
+            log.info("scan %s: close %.2f, %s", pair, candles[-1]["close"],
+                     "SETUP FOUND" if setup else "no setup")
             if not setup:
                 continue
             decision = risk.check(setup, self.broker.state(self.prices), self.cfg)

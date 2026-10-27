@@ -12,6 +12,7 @@ class Telegram:
         self.base = f"https://api.telegram.org/bot{token}" if token else None
         self.chat_id = str(chat_id) if chat_id else None
         self.offset = 0
+        self._warned = False
 
     @property
     def enabled(self):
@@ -25,7 +26,9 @@ class Telegram:
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": [buttons]}
         try:
-            requests.post(f"{self.base}/sendMessage", json=payload, timeout=20)
+            r = requests.post(f"{self.base}/sendMessage", json=payload, timeout=20)
+            if not r.ok:
+                log.error("telegram send failed: %s", r.text[:200])
         except requests.RequestException as exc:
             log.warning("telegram send failed: %s", exc)
 
@@ -36,10 +39,18 @@ class Telegram:
         try:
             r = requests.get(f"{self.base}/getUpdates",
                              params={"offset": self.offset, "timeout": 0}, timeout=20)
-            items = r.json().get("result", [])
+            data = r.json()
         except (requests.RequestException, ValueError) as exc:
             log.warning("telegram poll failed: %s", exc)
             return []
+        if not data.get("ok"):
+            if not self._warned:
+                log.error("TELEGRAM ERROR: %s - check TELEGRAM_BOT_TOKEN",
+                          data.get("description", "unknown"))
+                self._warned = True
+            return []
+        self._warned = False
+        items = data.get("result", [])
         events = []
         for u in items:
             self.offset = u["update_id"] + 1
