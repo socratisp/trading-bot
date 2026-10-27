@@ -1,6 +1,6 @@
 services:
   trading-bot:
-    build: .
+    image: ghcr.io/socratisp/trading-bot:latest
     container_name: trading-bot
     restart: unless-stopped
     environment:
