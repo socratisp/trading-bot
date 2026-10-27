@@ -4,6 +4,8 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -41,6 +43,8 @@ class Bot:
                                                               cfg["news"]["max_items"]))
         self.prices = {}
         self.last_candle = {}
+        self.scans = 0
+        self.last_scan_ts = None
 
     # --- monitoring ------------------------------------------------------
     def monitor(self):
@@ -170,18 +174,54 @@ class Bot:
                              f"stop {fmt(pos['stop'])} target {fmt(pos['target'])}")
             self.tg.send("\n".join(lines))
         elif cmd == "/stats":
-            s = self.broker.stats()
-            self.tg.send(f"Closed trades {s['closed_trades']} | Win rate {s['win_rate']:.0%}\n"
-                         f"Net P&L {s['net_pnl']:+.2f} | Expectancy {s['expectancy']:+.2f}/trade\n"
-                         f"Avg win {s['avg_win']:+.2f} | Avg loss {s['avg_loss']:+.2f}\n"
-                         f"Proposals: {s['proposals']}"
-                         + "".join(f"\n{p['pair']}: {p['trades']} trades, {p['wins']} wins, "
-                                   f"{p['pnl']:+.2f}" for p in s["by_pair"]))
+            self.tg.send(self.stats_text())
         elif cmd == "/resetkill":
             self.broker.reset_kill()
             self.tg.send("Kill switch reset. Trading resumes on the next scan.")
         else:
             self.tg.send("Commands: /status /stats /resetkill")
+
+    def stats_text(self):
+        s = self.broker.stats()
+        return (f"Closed trades {s['closed_trades']} | Win rate {s['win_rate']:.0%}\n"
+                f"Net P&L {s['net_pnl']:+.2f} | Expectancy {s['expectancy']:+.2f}/trade\n"
+                f"Avg win {s['avg_win']:+.2f} | Avg loss {s['avg_loss']:+.2f}\n"
+                f"Proposals: {s['proposals']}"
+                + "".join(f"\n{p['pair']}: {p['trades']} trades, {p['wins']} wins, "
+                          f"{p['pnl']:+.2f}" for p in s["by_pair"]))
+
+    # --- weekly report ---------------------------------------------------
+    def report_due(self, now=None):
+        r = self.cfg.get("report")
+        if not r:
+            return None
+        local = now or datetime.now(ZoneInfo(r["timezone"]))
+        key = local.strftime("%G-W%V")
+        if (local.weekday() == r["weekday"] and local.hour >= r["hour"]
+                and self.broker._get("last_report") != key):
+            return key
+        return None
+
+    def weekly_report(self, now=None):
+        key = self.report_due(now)
+        if not key:
+            return False
+        st = self.broker.state(self.prices)
+        since = int(time.time()) - 7 * 86400
+        setups = self.broker.db.execute(
+            "SELECT COUNT(*) FROM proposals WHERE ts >= ?", (since,)).fetchone()[0]
+        last = (datetime.fromtimestamp(self.last_scan_ts, ZoneInfo(self.cfg["report"]["timezone"]))
+                .strftime("%a %H:%M") if self.last_scan_ts else "never")
+        self.tg.send(f"📊 <b>Weekly report</b> - bot alive ✅\n"
+                     f"Scans this week: {self.scans} | last scan {last}\n"
+                     f"Setups this week: {setups} | open positions: {len(st['open_pairs'])}\n"
+                     f"Equity {st['equity']:.2f} (start {self.cfg['account']['starting_equity']}) | "
+                     f"kill switch {'ON' if st['killed'] else 'off'}\n\n"
+                     + self.stats_text())
+        self.broker._set("last_report", key)
+        self.broker.db.commit()
+        self.scans = 0
+        return True
 
     def expire(self):
         limit = self.cfg["approval"]["expiry_min"] * 60
@@ -200,11 +240,14 @@ class Bot:
             try:
                 self.handle_telegram()
                 self.expire()
+                self.weekly_report()
                 if now >= next_monitor:
                     self.monitor()
                     next_monitor = now + sched["monitor_every_sec"]
                 if now >= next_scan:
                     self.scan()
+                    self.scans += 1
+                    self.last_scan_ts = time.time()
                     next_scan = now + sched["scan_every_min"] * 60
             except Exception:
                 log.exception("loop error")

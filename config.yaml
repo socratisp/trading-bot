@@ -35,6 +35,11 @@ schedule:
   scan_every_min: 60       # signal scan (also limits Claude usage)
   monitor_every_sec: 120   # stop/target checks on open positions
 
+report:                    # weekly Telegram report = heartbeat. No report on Sunday = bot is down.
+  weekday: 6               # 0=Mon ... 6=Sun
+  hour: 18
+  timezone: Asia/Nicosia
+
 approval:
   required: false          # paper phase: auto-approve so results are not skewed by sleep. Set true before real money.
   expiry_min: 15

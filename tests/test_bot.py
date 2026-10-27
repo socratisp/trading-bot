@@ -253,3 +253,19 @@ def test_stats_by_pair(tmp_path):
     assert rows["BTC-USD"]["trades"] == 2 and rows["BTC-USD"]["wins"] == 1
     assert rows["BTC-USD"]["pnl"] == pytest.approx(15.0)
     assert rows["SOL-USD"]["pnl"] == pytest.approx(-5.0)
+
+
+def test_weekly_report_once_per_week(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    bot, tg, _ = make_bot(tmp_path)
+    tz = ZoneInfo("Asia/Nicosia")
+    sunday_early = datetime(2026, 11, 1, 10, 0, tzinfo=tz)
+    sunday_evening = datetime(2026, 11, 1, 18, 5, tzinfo=tz)
+    monday = datetime(2026, 11, 2, 18, 5, tzinfo=tz)
+    assert not bot.weekly_report(sunday_early)
+    assert not bot.weekly_report(monday)
+    assert bot.weekly_report(sunday_evening)
+    assert "Weekly report" in tg.sent[-1][0] and "alive" in tg.sent[-1][0]
+    assert not bot.weekly_report(sunday_evening)  # no duplicate after restart
+    assert bot.weekly_report(datetime(2026, 11, 8, 19, 0, tzinfo=tz))
