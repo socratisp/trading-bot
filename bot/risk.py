@@ -1,4 +1,4 @@
-"""Risk engine. Every proposal and every order passes through here."""
+"""Risk engine. Every proposal and every fill passes through here."""
 from dataclasses import dataclass
 
 
@@ -21,7 +21,7 @@ def reward_risk_after_fees(entry, stop, target, fee_rate):
 
 
 def size(entry, stop, equity, r):
-    """Units to buy so a stop-out loses risk_per_trade of equity (fees included)."""
+    """Units to buy so a stop-out loses risk_per_trade of equity."""
     loss_per_unit = entry - stop
     if loss_per_unit <= 0:
         return 0.0
@@ -30,17 +30,17 @@ def size(entry, stop, equity, r):
     return min(qty, cap)
 
 
-def check(setup, state, cfg):
-    """state: equity, cash, peak, day_start_equity, killed, open_pairs (list)."""
-    r = cfg["risk"]
-    fee = cfg["exchange"]["fee_rate"]
+def check(setup, state, r, fee, min_rr=None):
+    """r: shared risk rules. state: equity, cash, peak, day_start_equity, killed, open_pairs.
+    min_rr: per-strategy override of r['min_reward_risk']."""
+    min_rr = r["min_reward_risk"] if min_rr is None else min_rr
 
     if state["killed"]:
-        return Decision(False, "kill switch active (max drawdown hit) - manual reset needed")
+        return Decision(False, "kill switch active (max drawdown hit) - send /resetkill after review")
     if state["peak"] > 0 and state["equity"] <= state["peak"] * (1 - r["max_drawdown_kill"]):
         return Decision(False, "max drawdown reached - kill switch")
     if state["equity"] <= state["day_start_equity"] * (1 - r["daily_loss_halt"]):
-        return Decision(False, "daily loss limit hit - halted until tomorrow (UTC)")
+        return Decision(False, "daily loss limit hit - paused until tomorrow (UTC)")
     if len(state["open_pairs"]) >= r["max_open_positions"]:
         return Decision(False, "max open positions reached")
     if setup["pair"] in state["open_pairs"]:
@@ -49,12 +49,11 @@ def check(setup, state, cfg):
         return Decision(False, "invalid levels")
 
     rr = reward_risk_after_fees(setup["entry"], setup["stop"], setup["target"], fee)
-    if rr < r["min_reward_risk"]:
-        return Decision(False, f"reward:risk {rr:.2f} after fees is below {r['min_reward_risk']}")
+    if rr < min_rr:
+        return Decision(False, f"reward:risk {rr:.2f} after fees is below {min_rr}")
 
     qty = size(setup["entry"], setup["stop"], state["equity"], r)
-    cost = qty * setup["entry"] * (1 + fee)
-    if cost > state["cash"]:
+    if qty * setup["entry"] * (1 + fee) > state["cash"]:
         qty = state["cash"] / (setup["entry"] * (1 + fee))
     if qty * setup["entry"] < 5:  # dust guard
         return Decision(False, "position too small")

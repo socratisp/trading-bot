@@ -1,39 +1,80 @@
-# Trading bot config. LIVE trading is not implemented in this version.
-mode: paper                # paper only for now
+# Trading bot config. PAPER ONLY - there is no live order code in this version.
+mode: paper
 
 exchange:
   base_url: https://revx.revolut.com/api/1.0
   region: EEA
   pairs: [BTC-USD, ETH-USD, SOL-USD, XRP-USD, ADA-USD, DOGE-USD, LINK-USD, AVAX-USD,
           DOT-USD, LTC-USD, BNB-USD, TRX-USD, SUI-USD]
-  # Testing: most alts are thin on Revolut X (<$150k/day), so real fills would be worse than paper.
-  interval_min: 240        # 4h candles for signals
-  fee_rate: 0.001          # 0.1% per side, conservative; check your Revolut X fee tier
+  # Most alts are thin on Revolut X (<$150k/day): real fills would be worse than paper.
+  fee_rate: 0.0009         # Revolut X taker fee, charged on BOTH sides (maker is 0%, but paper can't model limit fills honestly)
 
 account:
-  starting_equity: 200     # paper USD
+  starting_equity: 200     # paper USD, per strategy
 
-strategy:
-  ema_fast: 50
-  ema_slow: 200
-  rsi_period: 14
-  rsi_min: 35              # pullback zone in an uptrend
-  rsi_max: 50
-  atr_period: 14
-  stop_atr_mult: 1.5
-  target_atr_mult: 3.5      # 3.0 gives exactly 2:1 before fees, which always fails the 2:1-after-fees rule
-
+# Shared risk rules. A strategy can override min_reward_risk only.
 risk:
-  risk_per_trade: 0.01     # 1% of equity lost if stop hits
+  risk_per_trade: 0.01     # 1% of that strategy's equity lost if the stop hits
   min_reward_risk: 2.0     # after fees
-  max_open_positions: 2
+  max_open_positions: 2    # per strategy
   max_position_pct: 0.30   # max 30% of equity in one coin
-  daily_loss_halt: 0.03    # -3% in a day -> no new trades until tomorrow (UTC)
-  max_drawdown_kill: 0.10  # -10% from peak -> kill switch, manual reset
+  daily_loss_halt: 0.03    # -3% in a day -> that strategy pauses until tomorrow (UTC)
+  max_drawdown_kill: 0.10  # -10% from peak -> kill switch for that strategy, /resetkill to resume
+
+# Four strategies compete, each with its own $200 paper account.
+strategies:
+  trend_4h:                # baseline: buy dips in an uptrend, rarely trades
+    type: trend
+    interval_min: 240
+    ema_fast: 50
+    ema_slow: 200
+    rsi_min: 35
+    rsi_max: 50
+    stop_atr_mult: 1.5
+    target_atr_mult: 3.5   # 3.0 = exactly 2:1 before fees, which always fails the 2:1 rule
+    llm_review: true
+
+  trend_1h:                # same idea on hourly candles
+    type: trend
+    interval_min: 60
+    ema_fast: 50
+    ema_slow: 200
+    rsi_min: 35
+    rsi_max: 50
+    stop_atr_mult: 1.5
+    target_atr_mult: 3.5
+    min_reward_risk: 1.5   # fees eat more on small moves; 2.0 would block almost every trade
+    llm_review: true
+
+  bounce_1h:               # buys sharp drops (works in downtrends) - most likely to lose
+    type: bounce
+    interval_min: 60
+    rsi_max: 30            # oversold
+    stop_atr_mult: 1.5
+    target_atr_mult: 3.0
+    min_reward_risk: 1.3
+    llm_review: false
+
+  scalp_15m:               # Socratis' idea: quick dip trades, short hold, cooldown
+    type: trend
+    interval_min: 15
+    ema_fast: 20
+    ema_slow: 50
+    rsi_min: 35
+    rsi_max: 50
+    stop_atr_mult: 1.5
+    target_atr_mult: 3.0
+    min_reward_risk: 1.0   # only volatile coins can pass anything higher after fees
+    max_hold_min: 20       # sell at market after 20 min
+    cooldown_min: 90       # no new trade on the same coin for 90 min after an exit
+    llm_review: false
+
+indicators:
+  rsi_period: 14
+  atr_period: 14
 
 schedule:
-  scan_every_min: 60       # signal scan (also limits Claude usage)
-  monitor_every_sec: 120   # stop/target checks on open positions
+  monitor_every_sec: 30    # stop / target / time-exit checks on open positions
 
 report:                    # weekly Telegram report = heartbeat. No report on Sunday = bot is down.
   weekday: 6               # 0=Mon ... 6=Sun
@@ -41,12 +82,12 @@ report:                    # weekly Telegram report = heartbeat. No report on Su
   timezone: Asia/Nicosia
 
 approval:
-  required: false          # paper phase: auto-approve so results are not skewed by sleep. Set true before real money.
+  required: false          # paper: auto-approve so results aren't skewed by sleep. Set true before real money.
   expiry_min: 15
 
 llm:
-  enabled: true
-  model: haiku             # cheapest model, saves your Pro quota
+  enabled: true            # only used by strategies with llm_review: true
+  model: haiku
   timeout_sec: 120
 
 news:

@@ -1,0 +1,71 @@
+"""Rough replay of every strategy over recent Revolut X history (up to 1000 candles).
+
+Usage: python -m scripts.replay
+Ignores position limits and the daily/kill-switch rules, so treat it as a sanity
+check of the entry/exit rules, not a precise backtest. Results are in R:
+1R = the planned risk of one trade (1% of equity), so -10R ~ -10% of the account.
+"""
+import yaml
+
+from bot import risk, strategy
+from bot.market import Market
+
+
+def replay(cfg):
+    m = Market(cfg["exchange"]["base_url"], cfg["exchange"].get("region", "EEA"))
+    fee, ind = cfg["exchange"]["fee_rate"], cfg["indicators"]
+    cache = {}
+    for name, s in cfg["strategies"].items():
+        iv = s["interval_min"]
+        trades, span_days = [], 0.0
+        for pair in cfg["exchange"]["pairs"]:
+            if (pair, iv) not in cache:
+                try:
+                    cache[(pair, iv)] = m.candles(pair, iv)
+                except Exception:
+                    cache[(pair, iv)] = []
+            c = cache[(pair, iv)]
+            if len(c) < 260:
+                continue
+            span_days = max(span_days, (c[-1]["start"] - c[210]["start"]) / 86_400_000)
+            busy_until, last_exit = 0, 0
+            for e in range(210, len(c) - 1):
+                if e < busy_until:
+                    continue
+                st = strategy.find_setup(pair, c[:e + 1], s, ind)
+                if not st:
+                    continue
+                if s.get("cooldown_min") and c[e]["start"] - last_exit < s["cooldown_min"] * 60_000:
+                    continue
+                rr = risk.reward_risk_after_fees(st["entry"], st["stop"], st["target"], fee)
+                if rr < s.get("min_reward_risk", cfg["risk"]["min_reward_risk"]):
+                    continue
+                entry = c[e + 1]["open"]
+                max_bars = max(1, s["max_hold_min"] // iv) if s.get("max_hold_min") else 10 ** 9
+                result = None
+                for k in range(e + 1, len(c)):
+                    b = c[k]
+                    if b["low"] <= st["stop"]:
+                        exit_price = st["stop"]
+                    elif b["high"] >= st["target"]:
+                        exit_price = st["target"]
+                    elif k - e >= max_bars:
+                        exit_price = b["close"]
+                    else:
+                        continue
+                    pnl = (exit_price * (1 - fee) - entry * (1 + fee)) / entry
+                    result = pnl / ((entry - st["stop"]) / entry)
+                    break
+                if result is None:
+                    continue
+                trades.append(result)
+                busy_until, last_exit = k, c[k]["start"]
+        n = len(trades)
+        wins = sum(t > 0 for t in trades)
+        print(f"{name:10s} {span_days:5.1f} days | {n:3d} trades ({n / max(span_days, 1):.2f}/day) | "
+              f"win {wins / max(n, 1):.0%} | avg {sum(trades) / max(n, 1):+.2f}R | "
+              f"total {sum(trades):+.1f}R")
+
+
+if __name__ == "__main__":
+    replay(yaml.safe_load(open("config.yaml")))

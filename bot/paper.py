@@ -127,9 +127,11 @@ class PaperBroker:
         self.db.commit()
         return pnl
 
-    def check_exits(self, pair, last, high, low):
+    def check_exits(self, pair, last, high, low, max_hold_min=None, now=None):
         """Spot has no reliable server-side stop via API, so the bot watches levels.
-        If both stop and target were touched in the same bar, assume the stop (pessimistic)."""
+        If both stop and target were touched in the same bar, assume the stop (pessimistic).
+        With max_hold_min, a position older than that is sold at the last price."""
+        now = now or time.time()
         closed = []
         for pos in self.open_positions():
             if pos["pair"] != pair:
@@ -138,7 +140,14 @@ class PaperBroker:
                 closed.append((pos, "stop", self.sell(pos["id"], pos["stop"], "stop")))
             elif high >= pos["target"]:
                 closed.append((pos, "target", self.sell(pos["id"], pos["target"], "target")))
+            elif max_hold_min and now - pos["opened_ts"] >= max_hold_min * 60:
+                closed.append((pos, "time", self.sell(pos["id"], last, "time")))
         return closed
+
+    def last_exit_ts(self, pair):
+        row = self.db.execute("SELECT MAX(closed_ts) t FROM positions WHERE pair=?",
+                              (pair,)).fetchone()
+        return row["t"] or 0
 
     # --- stats -----------------------------------------------------------
     def stats(self):
