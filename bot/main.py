@@ -174,7 +174,9 @@ class Bot:
             self.tg.send(f"Closed trades {s['closed_trades']} | Win rate {s['win_rate']:.0%}\n"
                          f"Net P&L {s['net_pnl']:+.2f} | Expectancy {s['expectancy']:+.2f}/trade\n"
                          f"Avg win {s['avg_win']:+.2f} | Avg loss {s['avg_loss']:+.2f}\n"
-                         f"Proposals: {s['proposals']}")
+                         f"Proposals: {s['proposals']}"
+                         + "".join(f"\n{p['pair']}: {p['trades']} trades, {p['wins']} wins, "
+                                   f"{p['pnl']:+.2f}" for p in s["by_pair"]))
         elif cmd == "/resetkill":
             self.broker.reset_kill()
             self.tg.send("Kill switch reset. Trading resumes on the next scan.")

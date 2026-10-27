@@ -157,4 +157,7 @@ class PaperBroker:
             "avg_win": sum(wins) / len(wins) if wins else 0.0,
             "avg_loss": sum(losses) / len(losses) if losses else 0.0,
             "proposals": counts,
+            "by_pair": [dict(r) for r in self.db.execute(
+                "SELECT pair, COUNT(*) trades, SUM(pnl > 0) wins, SUM(pnl) pnl "
+                "FROM positions WHERE closed_ts IS NOT NULL GROUP BY pair ORDER BY pnl DESC")],
         }

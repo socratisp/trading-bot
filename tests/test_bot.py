@@ -239,3 +239,17 @@ def test_auto_approve_fills_immediately(tmp_path):
     assert bot.broker.proposal(1)["status"] == "filled"
     assert len(bot.broker.open_positions()) == 1
     assert "paper BUY" in tg.sent[-1][0]
+
+
+def test_stats_by_pair(tmp_path):
+    b = PaperBroker(str(tmp_path / "t.sqlite"), 1000, 0.0)
+    for pair, exit_price in [("BTC-USD", 120), ("SOL-USD", 95), ("BTC-USD", 95)]:
+        d = risk.Decision(True, "ok", qty=1.0)
+        pid = b.log_proposal({**setup(pair=pair), "setup": "", "snapshot": {}}, d, None, "", "filled")
+        b.buy(pid, 100.0)
+        pos = b.open_positions()[-1]
+        b.sell(pos["id"], exit_price, "test")
+    rows = {r["pair"]: r for r in b.stats()["by_pair"]}
+    assert rows["BTC-USD"]["trades"] == 2 and rows["BTC-USD"]["wins"] == 1
+    assert rows["BTC-USD"]["pnl"] == pytest.approx(15.0)
+    assert rows["SOL-USD"]["pnl"] == pytest.approx(-5.0)

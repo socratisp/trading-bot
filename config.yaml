@@ -4,7 +4,9 @@ mode: paper                # paper only for now
 exchange:
   base_url: https://revx.revolut.com/api/1.0
   region: EEA
-  pairs: [BTC-USD, ETH-USD, SOL-USD]
+  pairs: [BTC-USD, ETH-USD, SOL-USD, XRP-USD, ADA-USD, DOGE-USD, LINK-USD, AVAX-USD,
+          DOT-USD, LTC-USD, BNB-USD, TRX-USD, SUI-USD]
+  # Testing: most alts are thin on Revolut X (<$150k/day), so real fills would be worse than paper.
   interval_min: 240        # 4h candles for signals
   fee_rate: 0.001          # 0.1% per side, conservative; check your Revolut X fee tier
 
