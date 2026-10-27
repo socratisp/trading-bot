@@ -138,7 +138,10 @@ class Bot:
             return
         qty = self.broker.buy(pid, price)
         self.broker.set_status(pid, "filled")
-        self.tg.send(f"🟢 #{pid} paper BUY {qty:.6f} {p['pair']} at {fmt(price)}")
+        self.tg.send(f"🟢 #{pid} paper BUY {qty:.6f} {p['pair']} at {fmt(price)}\n"
+                     f"Stop {fmt(p['stop'])} | Target {fmt(p['target'])} | "
+                     f"R:R {d.reward_risk:.2f}\nWhy: {p['setup']}\n"
+                     f"Claude: {p['llm_verdict']} - {p['llm_reason']}")
 
     # --- telegram ------------------------------------------------------------
     def handle_telegram(self):

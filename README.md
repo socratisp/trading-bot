@@ -11,7 +11,7 @@ target and size. Claude can only veto on news. You approve every trade in Telegr
 4. Risk engine: 1% equity risk, R:R >= 2 after fees, max 2 positions, max 30% per coin,
    -3% daily halt, -10% drawdown kill switch.
 5. Claude (`claude -p`, Haiku) reads RSS headlines and approves or vetoes.
-6. Telegram message with Approve / Reject. Expires after 15 min.
+6. Paper phase: auto-approved, Telegram notifies every fill and exit. (Set approval.required: true for manual Approve / Reject.)
 7. Paper fill at the current price; stop/target checked every 2 min.
 
 Everything is logged to `/data/bot.sqlite`, including rejected and expired setups.

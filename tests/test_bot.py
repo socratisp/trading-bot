@@ -173,8 +173,9 @@ def pullback_candles():
     raise AssertionError("no setup")
 
 
-def make_bot(tmp_path, verdict="approve"):
+def make_bot(tmp_path, verdict="approve", manual=True):
     cfg = copy.deepcopy(CFG)
+    cfg["approval"]["required"] = manual
     cfg["data_dir"] = str(tmp_path)
     cfg["exchange"]["pairs"] = ["BTC-USD"]
     tg, mkt = FakeTG(), FakeMarket(pullback_candles())
@@ -230,3 +231,11 @@ def test_kill_switch_triggers(tmp_path):
     bot.monitor()
     assert "Kill switch" in tg.sent[-1][0]
     assert bot.broker.state({})["killed"]
+
+
+def test_auto_approve_fills_immediately(tmp_path):
+    bot, tg, _ = make_bot(tmp_path, manual=False)
+    bot.scan()
+    assert bot.broker.proposal(1)["status"] == "filled"
+    assert len(bot.broker.open_positions()) == 1
+    assert "paper BUY" in tg.sent[-1][0]

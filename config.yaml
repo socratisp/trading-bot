@@ -34,7 +34,7 @@ schedule:
   monitor_every_sec: 120   # stop/target checks on open positions
 
 approval:
-  required: true           # proposals need a Telegram tap
+  required: false          # paper phase: auto-approve so results are not skewed by sleep. Set true before real money.
   expiry_min: 15
 
 llm:
