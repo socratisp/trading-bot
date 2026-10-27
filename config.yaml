@@ -1,0 +1,51 @@
+# Trading bot config. LIVE trading is not implemented in this version.
+mode: paper                # paper only for now
+
+exchange:
+  base_url: https://revx.revolut.com/api/1.0
+  region: EEA
+  pairs: [BTC-USD, ETH-USD, SOL-USD]
+  interval_min: 240        # 4h candles for signals
+  fee_rate: 0.001          # 0.1% per side, conservative; check your Revolut X fee tier
+
+account:
+  starting_equity: 200     # paper USD
+
+strategy:
+  ema_fast: 50
+  ema_slow: 200
+  rsi_period: 14
+  rsi_min: 35              # pullback zone in an uptrend
+  rsi_max: 50
+  atr_period: 14
+  stop_atr_mult: 1.5
+  target_atr_mult: 3.5      # 3.0 gives exactly 2:1 before fees, which always fails the 2:1-after-fees rule
+
+risk:
+  risk_per_trade: 0.01     # 1% of equity lost if stop hits
+  min_reward_risk: 2.0     # after fees
+  max_open_positions: 2
+  max_position_pct: 0.30   # max 30% of equity in one coin
+  daily_loss_halt: 0.03    # -3% in a day -> no new trades until tomorrow (UTC)
+  max_drawdown_kill: 0.10  # -10% from peak -> kill switch, manual reset
+
+schedule:
+  scan_every_min: 60       # signal scan (also limits Claude usage)
+  monitor_every_sec: 120   # stop/target checks on open positions
+
+approval:
+  required: true           # proposals need a Telegram tap
+  expiry_min: 15
+
+llm:
+  enabled: true
+  model: haiku             # cheapest model, saves your Pro quota
+  timeout_sec: 120
+
+news:
+  feeds:
+    - https://www.coindesk.com/arc/outboundfeeds/rss/
+    - https://cointelegraph.com/rss
+  max_items: 15
+
+data_dir: /data
