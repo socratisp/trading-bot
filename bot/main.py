@@ -71,16 +71,18 @@ class Bot:
         return {"min_rr": run.s.get("min_reward_risk"), "position_pct": run.s.get("position_pct"),
                 "max_dd": run.s.get("max_drawdown_kill")}
 
+    def chart_png(self, run, pos):
+        iv = run.s["interval_min"]
+        until = ((pos["closed_ts"] or time.time()) + 6 * iv * 60) * 1000
+        candles = self.market.candles(pos["pair"], iv, until_ms=min(until, time.time() * 1000))
+        return charts.trade_chart(candles, pos, f"[{run.name}] {pos['pair']} "
+                                  f"{pos['close_reason']} P&L {pos['pnl']:+.2f} USD", iv)
+
     def exit_report(self, run, position_id, text):
         """Chart of the trade with the exit message as caption; plain text if anything fails."""
         try:
             pos = run.broker.position(position_id)
-            iv = run.s["interval_min"]
-            self._candles.pop((pos["pair"], iv), None)  # include the latest candles
-            png = charts.trade_chart(self.candles(pos["pair"], iv), pos,
-                                     f"[{run.name}] {pos['pair']} {pos['close_reason']} "
-                                     f"P&L {pos['pnl']:+.2f} USD", iv)
-            self.tg.send_photo(png, f"[{run.name}] {text}")
+            self.tg.send_photo(self.chart_png(run, pos), f"[{run.name}] {text}")
         except Exception:
             log.exception("chart failed")
             self.send(run, text)
@@ -282,6 +284,8 @@ class Bot:
                 self.tg.send(f"<b>{arg}</b>\n" + self.stats_text(self.runners[arg], detail=True))
             else:
                 self.tg.send(self.ranking() + "\n\nDetails: /stats " + " | /stats ".join(self.runners))
+        elif cmd == "/tradecharts":
+            self.trade_charts(words[1:])
         elif cmd == "/resetkill":
             targets = list(self.runners.values()) if arg in (None, "all") else (
                 [self.runners[arg]] if arg in self.runners else [])
@@ -289,7 +293,72 @@ class Bot:
                 run.broker.reset_kill()
             self.tg.send(f"Kill switch reset: {', '.join(r.name for r in targets) or 'nothing'}")
         else:
-            self.tg.send("Commands: /status  /stats  /stats &lt;strategy&gt;  /resetkill [strategy|all]")
+            self.tg.send("Commands:\n/status\n/stats  or  /stats &lt;strategy&gt;\n"
+                         "/tradecharts  (last 10 trades)\n/tradecharts 7d\n"
+                         "/tradecharts 2026-10-01 2026-10-28\n/tradecharts trend_1h 7d\n"
+                         "/resetkill [strategy|all]")
+
+    MAX_CHARTS = 20
+
+    def parse_range(self, args):
+        """-> (strategy or None, since_ts or None, until_ts or None, limit) or error string."""
+        tz = ZoneInfo(self.cfg.get("report", {}).get("timezone", "UTC"))
+        name, dates, days = None, [], None
+        for a in args:
+            a = a.lower()
+            if a in self.runners:
+                name = a
+            elif a.endswith("d") and a[:-1].isdigit():
+                days = int(a[:-1])
+            else:
+                try:
+                    dates.append(datetime.strptime(a, "%Y-%m-%d").replace(tzinfo=tz))
+                except ValueError:
+                    return f"Didn't understand '{a}'. Try /tradecharts 7d or /tradecharts 2026-10-01 2026-10-28"
+        if days is not None:
+            return name, time.time() - days * 86400, None, self.MAX_CHARTS
+        if dates:
+            start = min(dates).timestamp()
+            end = max(dates).timestamp() + 86400  # include the whole last day
+            return name, start, end, self.MAX_CHARTS
+        return name, None, None, 10
+
+    def trade_charts(self, args):
+        parsed = self.parse_range(args)
+        if isinstance(parsed, str):
+            self.tg.send(parsed)
+            return
+        name, since, until, limit = parsed
+        trades = []
+        for run in self.runners.values():
+            if name and run.name != name:
+                continue
+            for row in run.broker.db.execute(
+                    "SELECT * FROM positions WHERE closed_ts IS NOT NULL ORDER BY closed_ts"):
+                pos = dict(row)
+                if since and pos["closed_ts"] < since:
+                    continue
+                if until and pos["closed_ts"] >= until:
+                    continue
+                trades.append((pos["closed_ts"], run, pos))
+        if not trades:
+            self.tg.send("No closed trades in that range yet.")
+            return
+        trades.sort(key=lambda t: t[0])
+        shown = trades[-limit:]
+        total = sum(p["pnl"] for _, _, p in trades)
+        self.tg.send(f"📈 {len(trades)} closed trade(s), net {total:+.2f} USD."
+                     + (f" Showing the latest {len(shown)}." if len(shown) < len(trades) else ""))
+        tz = ZoneInfo(self.cfg.get("report", {}).get("timezone", "UTC"))
+        for closed_ts, run, pos in shown:
+            when = datetime.fromtimestamp(closed_ts, tz).strftime("%d %b %H:%M")
+            caption = (f"[{run.name}] {pos['pair']} closed {when} ({pos['close_reason']}): "
+                       f"P&L {pos['pnl']:+.2f} USD")
+            try:
+                self.tg.send_photo(self.chart_png(run, pos), caption)
+            except Exception:
+                log.exception("chart failed")
+                self.tg.send(caption + " (chart unavailable)")
 
     def stats_text(self, run, detail=False):
         s = run.broker.stats()

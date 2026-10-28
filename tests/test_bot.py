@@ -195,7 +195,7 @@ class FakeMarket:
         self.price = candles[-1]["close"]
         self.hi = self.lo = self.price
 
-    def candles(self, pair, interval):
+    def candles(self, pair, interval, until_ms=None):
         return self.c
 
     def last_price(self, pair):
@@ -449,3 +449,35 @@ def test_chart_renders_png():
            "exit_price": c[50]["close"], "stop": c[40]["close"] * 0.95,
            "target": c[40]["close"] * 1.1}
     assert charts.trade_chart(c, pos, "test", 240)[:4] == b"\x89PNG"
+
+
+def test_tradecharts_command(tmp_path):
+    bot, tg, _ = make_bot(tmp_path, only=("trend_4h", "bounce_1h"))
+    bot.command(["/tradecharts"])
+    assert "No closed trades" in tg.sent[-1][0]
+    a, b = bot.runners["trend_4h"].broker, bot.runners["bounce_1h"].broker
+    for broker in (a, a, b):
+        broker.sell(opened(broker, qty=1.0)["id"], 105, "target")
+    tg.sent.clear()
+    bot.command(["/tradecharts"])
+    assert "3 closed trade(s), net +14.45" in tg.sent[0][0]  # 3 x +5 minus fees
+    assert [k for _, k in tg.sent[1:]] == ["photo"] * 3
+    tg.sent.clear()
+    bot.command(["/tradecharts", "bounce_1h", "7d"])
+    assert "1 closed trade(s)" in tg.sent[0][0] and len(tg.sent) == 2
+    tg.sent.clear()
+    bot.command(["/tradecharts", "2020-01-01", "2020-01-31"])
+    assert "No closed trades" in tg.sent[-1][0]
+    bot.command(["/tradecharts", "yesterday"])
+    assert "Didn't understand" in tg.sent[-1][0]
+
+
+def test_tradecharts_caps_output(tmp_path):
+    bot, tg, _ = make_bot(tmp_path)
+    b = bot.runners["trend_4h"].broker
+    for _ in range(25):
+        b.sell(opened(b, qty=0.1)["id"], 101, "target")
+    tg.sent.clear()
+    bot.command(["/tradecharts", "30d"])
+    assert "25 closed trade(s)" in tg.sent[0][0] and "latest 20" in tg.sent[0][0]
+    assert len(tg.sent) == 21

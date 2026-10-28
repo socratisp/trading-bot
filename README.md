@@ -25,7 +25,10 @@ multi-year replay instead, since it only trades a few times a year.
 
 ## Telegram
 `/status` all strategies, `/stats` ranking, `/stats trend_4h` details,
-`/resetkill trend_4h` or `/resetkill all`. Weekly ranking every Sunday 18:00 (Cyprus).
+`/resetkill trend_4h` or `/resetkill all`.
+Every closed trade arrives as a chart (buy, sell, stop, target).
+`/tradecharts` last 10 trades, `/tradecharts 7d`, `/tradecharts 2026-10-01 2026-10-28`,
+`/tradecharts trend_1h 7d` - max 20 charts per request. Weekly ranking every Sunday 18:00 (Cyprus).
 
 ## Replay on real history
 `python -m scripts.replay` - rough check of the rules on the last ~1000 candles.

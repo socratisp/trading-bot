@@ -27,10 +27,13 @@ class Market:
             return r.json()
         raise RuntimeError(f"rate limited on {path}")
 
-    def candles(self, symbol, interval_min):
-        """Closed candles only, oldest first, as dicts of floats."""
-        data = self._get(f"/public/candles/{symbol}",
-                         {"interval": interval_min, "region": self.region})
+    def candles(self, symbol, interval_min, until_ms=None):
+        """Closed candles only, oldest first, as dicts of floats.
+        until_ms: fetch up to 1000 candles ending at that time (for old trade charts)."""
+        params = {"interval": interval_min, "region": self.region}
+        if until_ms:
+            params["until"] = int(until_ms)
+        data = self._get(f"/public/candles/{symbol}", params)
         rows = [{
             "start": int(c["start"]),
             "open": float(c["open"]), "high": float(c["high"]),
