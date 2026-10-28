@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from . import llm, news, risk, strategy
+from . import charts, llm, news, risk, strategy
 from .market import Market
 from .paper import PaperBroker
 from .telegram import Telegram
@@ -71,6 +71,20 @@ class Bot:
         return {"min_rr": run.s.get("min_reward_risk"), "position_pct": run.s.get("position_pct"),
                 "max_dd": run.s.get("max_drawdown_kill")}
 
+    def exit_report(self, run, position_id, text):
+        """Chart of the trade with the exit message as caption; plain text if anything fails."""
+        try:
+            pos = run.broker.position(position_id)
+            iv = run.s["interval_min"]
+            self._candles.pop((pos["pair"], iv), None)  # include the latest candles
+            png = charts.trade_chart(self.candles(pos["pair"], iv), pos,
+                                     f"[{run.name}] {pos['pair']} {pos['close_reason']} "
+                                     f"P&L {pos['pnl']:+.2f} USD", iv)
+            self.tg.send_photo(png, f"[{run.name}] {text}")
+        except Exception:
+            log.exception("chart failed")
+            self.send(run, text)
+
     def send(self, run, text, buttons=None):
         self.tg.send(f"[{run.name}] {text}", buttons)
 
@@ -103,7 +117,8 @@ class Bot:
                     icon = "✅" if pnl > 0 else "🛑"
                     log.info("TRADE EXIT [%s] %s %s entry %s P&L %+.2f", run.name, pair, why,
                              fmt(pos["entry"]), pnl)
-                    self.send(run, f"{icon} <b>{pair}</b> closed ({why}): P&L {pnl:+.2f} USD")
+                    self.exit_report(run, pos["id"],
+                                     f"{icon} <b>{pair}</b> closed ({why}): P&L {pnl:+.2f} USD")
             st = run.broker.state(self.prices)
             if not st["killed"] and st["equity"] <= st["peak"] * (1 - dd):
                 run.broker.kill()
@@ -183,8 +198,9 @@ class Bot:
             pnl = run.broker.sell(pos["id"], price, "trend exit")
             log.info("TRADE EXIT [%s] %s trend exit entry %s P&L %+.2f", run.name, pair,
                      fmt(pos["entry"]), pnl)
-            self.send(run, f"{'✅' if pnl > 0 else '🛑'} <b>{pair}</b> closed (trend ended: daily "
-                           f"close below {run.s['sma']}-day average): P&L {pnl:+.2f} USD")
+            self.exit_report(run, pos["id"], f"{'✅' if pnl > 0 else '🛑'} <b>{pair}</b> closed "
+                                             f"(trend ended: daily close below {run.s['sma']}-day "
+                                             f"average): P&L {pnl:+.2f} USD")
 
     def propose(self, run, pid, setup, d, verdict, reason):
         mins = self.cfg["approval"]["expiry_min"]

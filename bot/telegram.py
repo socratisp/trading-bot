@@ -37,6 +37,26 @@ class Telegram:
         except requests.RequestException as exc:
             log.warning("telegram send failed: %s", exc)
 
+    def send_photo(self, png, caption=""):
+        if not self.enabled:
+            log.info("[telegram disabled] photo: %s", caption)
+            return
+        try:
+            r = requests.post(f"{self.base}/sendPhoto",
+                              data={"chat_id": self.chat_id, "caption": caption[:1000],
+                                    "parse_mode": "HTML"},
+                              files={"photo": ("trade.png", png, "image/png")}, timeout=30)
+            if r.status_code == 429:
+                time.sleep(min(r.json().get("parameters", {}).get("retry_after", 5), 30))
+                r = requests.post(f"{self.base}/sendPhoto",
+                                  data={"chat_id": self.chat_id, "caption": caption[:1000],
+                                        "parse_mode": "HTML"},
+                                  files={"photo": ("trade.png", png, "image/png")}, timeout=30)
+            if not r.ok:
+                log.error("telegram photo failed: %s", r.text[:200])
+        except requests.RequestException as exc:
+            log.warning("telegram photo failed: %s", exc)
+
     def updates(self):
         """Returns list of ('button', data) or ('command', text) from YOUR chat only."""
         if not self.base:

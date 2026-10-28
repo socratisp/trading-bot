@@ -209,6 +209,10 @@ class FakeTG:
     def send(self, text, buttons=None):
         self.sent.append((text, buttons))
 
+    def send_photo(self, png, caption=""):
+        assert png[:4] == b"\x89PNG"
+        self.sent.append((caption, "photo"))
+
     def updates(self):
         q, self.queue = self.queue, []
         return q
@@ -423,3 +427,25 @@ def test_ranking_counts_open_positions(tmp_path):
     bot.prices["BTC-USD"] = 130.0  # +30 unrealised
     text = bot.ranking()
     assert text.index("bounce_1h") < text.index("trend_4h") and "1 open" in text
+
+
+def test_exit_sends_trade_chart(tmp_path):
+    bot, tg, mkt = make_bot(tmp_path, manual=False)
+    run = bot.runners["trend_4h"]
+    bot.scan(run)
+    pos = run.broker.open_positions()[0]
+    mkt.price = mkt.hi = pos["target"] + 1
+    mkt.lo = pos["entry"]
+    bot.monitor()
+    caption, kind = tg.sent[-1]
+    assert kind == "photo" and "closed (target)" in caption
+
+
+def test_chart_renders_png():
+    from bot import charts
+    c = make_candles(n=80)
+    t0 = c[40]["start"] / 1000
+    pos = {"opened_ts": t0, "closed_ts": t0 + 10 * 14400, "entry": c[40]["close"],
+           "exit_price": c[50]["close"], "stop": c[40]["close"] * 0.95,
+           "target": c[40]["close"] * 1.1}
+    assert charts.trade_chart(c, pos, "test", 240)[:4] == b"\x89PNG"

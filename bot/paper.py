@@ -146,6 +146,10 @@ class PaperBroker:
                 closed.append((pos, "time", self.sell(pos["id"], last, "time")))
         return closed
 
+    def position(self, position_id):
+        row = self.db.execute("SELECT * FROM positions WHERE id=?", (position_id,)).fetchone()
+        return dict(row) if row else None
+
     def last_exit_ts(self, pair):
         row = self.db.execute("SELECT MAX(closed_ts) t FROM positions WHERE pair=?",
                               (pair,)).fetchone()
