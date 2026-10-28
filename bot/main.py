@@ -151,6 +151,8 @@ class Bot:
             if held and strategy.exit_signal(candles, s):
                 self.signal_exit(run, pair, held, candles[-1]["close"])
                 continue
+            if held:
+                continue  # already in this coin; nothing to look for
             if min_vol and strategy.quote_volume_24h(candles, s["interval_min"]) < min_vol:
                 thin.append(pair)
                 continue
