@@ -1,15 +1,45 @@
 """Deterministic setup finders. The LLM never sets entry, stop, target or size.
 
+regime: long-term trend filter - hold while the daily close is above the
+        N-day simple average, exit when it closes below. No target.
 trend:  uptrend (EMA fast > EMA slow, close > EMA fast) and a dip (RSI in range).
 bounce: oversold (RSI below rsi_max) and the last candle closed higher than the
         one before it (first sign of a turn). No trend filter, so it trades in
         downtrends - that is the point, and the risk.
 Stop and target are ATR multiples from the last close. Long only (spot).
 """
-from .indicators import atr, ema, rsi
+from .indicators import atr, ema, rsi, sma
+
+
+def quote_volume_24h(candles, interval_min):
+    """USD traded over the last 24h of closed candles."""
+    bars = max(1, 1440 // interval_min)
+    return sum(c["volume"] * c["close"] for c in candles[-bars:])
+
+
+def exit_signal(candles, s):
+    """Signal-based exit (regime only): daily close back below the long average."""
+    if s["type"] != "regime":
+        return False
+    closes = [c["close"] for c in candles]
+    avg = sma(closes, s["sma"])
+    return avg is not None and closes[-1] < avg
 
 
 def find_setup(pair, candles, s, ind):
+    if s["type"] == "regime":
+        closes = [c["close"] for c in candles]
+        avg = sma(closes, s["sma"])
+        if avg is None or closes[-1] <= avg:
+            return None
+        close = closes[-1]
+        return {
+            "pair": pair, "side": "buy", "entry": close,
+            "stop": close * (1 - s["stop_pct"]),      # disaster stop only
+            "target": close * 100,                    # no target: exits on the trend signal
+            "setup": f"Daily close {close:,.2f} above {s['sma']}-day average {avg:,.2f}",
+            "snapshot": {"close": close, "sma": avg, "candle_start": candles[-1]["start"]},
+        }
     slow = s.get("ema_slow", 0)
     need = max(slow, ind["atr_period"], ind["rsi_period"]) + 5
     if len(candles) < need:

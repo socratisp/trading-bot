@@ -30,6 +30,8 @@ class PaperBroker:
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.fee = fee_rate
+        if self._get("start_equity") is None:
+            self._set("start_equity", starting_equity)
         if self._get("cash") is None:
             self._set("cash", starting_equity)
             self._set("peak", starting_equity)
@@ -152,7 +154,14 @@ class PaperBroker:
     # --- stats -----------------------------------------------------------
     def stats(self):
         rows = [dict(r) for r in self.db.execute(
-            "SELECT pnl FROM positions WHERE closed_ts IS NOT NULL")]
+            "SELECT pnl FROM positions WHERE closed_ts IS NOT NULL ORDER BY closed_ts")]
+        start = self._get("start_equity") or 0
+        eq, peak, max_dd = start, start, 0.0
+        for r in rows:
+            eq += r["pnl"]
+            peak = max(peak, eq)
+            if peak > 0:
+                max_dd = max(max_dd, 1 - eq / peak)
         wins = [r["pnl"] for r in rows if r["pnl"] > 0]
         losses = [r["pnl"] for r in rows if r["pnl"] <= 0]
         n = len(rows)
@@ -166,6 +175,7 @@ class PaperBroker:
             "avg_win": sum(wins) / len(wins) if wins else 0.0,
             "avg_loss": sum(losses) / len(losses) if losses else 0.0,
             "proposals": counts,
+            "max_drawdown": max_dd,
             "by_pair": [dict(r) for r in self.db.execute(
                 "SELECT pair, COUNT(*) trades, SUM(pnl > 0) wins, SUM(pnl) pnl "
                 "FROM positions WHERE closed_ts IS NOT NULL GROUP BY pair ORDER BY pnl DESC")],

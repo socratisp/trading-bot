@@ -67,6 +67,10 @@ class Bot:
         self.scans = 0
         self.last_scan_ts = None
 
+    def risk_args(self, run):
+        return {"min_rr": run.s.get("min_reward_risk"), "position_pct": run.s.get("position_pct"),
+                "max_dd": run.s.get("max_drawdown_kill")}
+
     def send(self, run, text, buttons=None):
         self.tg.send(f"[{run.name}] {text}", buttons)
 
@@ -91,8 +95,8 @@ class Bot:
                 self.prices[pair] = quotes[pair][0]
             except Exception as exc:
                 log.warning("price failed %s: %s", pair, exc)
-        dd = self.cfg["risk"]["max_drawdown_kill"]
         for run in self.runners.values():
+            dd = run.s.get("max_drawdown_kill", self.cfg["risk"]["max_drawdown_kill"])
             for pair, (last, high, low) in quotes.items():
                 for pos, why, pnl in run.broker.check_exits(pair, last, high, low,
                                                             run.s.get("max_hold_min")):
@@ -111,7 +115,9 @@ class Bot:
         s = run.s
         heads = None
         cooldown = s.get("cooldown_min", 0) * 60
-        for pair in self.cfg["exchange"]["pairs"]:
+        min_vol = self.cfg["exchange"].get("min_volume_usd_24h", 0)
+        thin = []
+        for pair in s.get("pairs") or self.cfg["exchange"]["pairs"]:
             try:
                 candles = self.candles(pair, s["interval_min"])
             except Exception as exc:
@@ -124,6 +130,14 @@ class Bot:
                 continue  # already evaluated this bar
             run.last_candle[pair] = candles[-1]["start"]
 
+            held = [p for p in run.broker.open_positions() if p["pair"] == pair]
+            if held and strategy.exit_signal(candles, s):
+                self.signal_exit(run, pair, held, candles[-1]["close"])
+                continue
+            if min_vol and strategy.quote_volume_24h(candles, s["interval_min"]) < min_vol:
+                thin.append(pair)
+                continue
+
             setup = strategy.find_setup(pair, candles, s, self.cfg["indicators"])
             if not setup:
                 continue
@@ -131,8 +145,10 @@ class Bot:
                 log.info("[%s] %s setup skipped: cooldown", run.name, pair)
                 continue
             d = risk.check(setup, run.broker.state(self.prices), self.cfg["risk"], self.fee,
-                           s.get("min_reward_risk"))
+                           **self.risk_args(run))
             if not d.ok:
+                if d.reason == "already holding this pair":
+                    continue
                 run.broker.log_proposal(setup, d, None, d.reason, "rejected_risk")
                 log.info("[%s] %s setup rejected: %s", run.name, pair, d.reason)
                 continue
@@ -154,6 +170,21 @@ class Bot:
             else:
                 pid = run.broker.log_proposal(setup, d, verdict, reason, "approved")
                 self.fill(run, pid)
+        if thin:
+            log.info("[%s] skipped %d thin pairs (<%s USD/24h): %s", run.name, len(thin),
+                     f"{min_vol:,.0f}", ", ".join(thin))
+
+    def signal_exit(self, run, pair, held, close):
+        try:
+            price = self.market.last_price(pair)[0]
+        except Exception:
+            price = close
+        for pos in held:
+            pnl = run.broker.sell(pos["id"], price, "trend exit")
+            log.info("TRADE EXIT [%s] %s trend exit entry %s P&L %+.2f", run.name, pair,
+                     fmt(pos["entry"]), pnl)
+            self.send(run, f"{'✅' if pnl > 0 else '🛑'} <b>{pair}</b> closed (trend ended: daily "
+                           f"close below {run.s['sma']}-day average): P&L {pnl:+.2f} USD")
 
     def propose(self, run, pid, setup, d, verdict, reason):
         mins = self.cfg["approval"]["expiry_min"]
@@ -177,7 +208,7 @@ class Bot:
         self.prices[p["pair"]] = price
         setup = {"pair": p["pair"], "entry": price, "stop": p["stop"], "target": p["target"]}
         d = risk.check(setup, run.broker.state(self.prices), self.cfg["risk"], self.fee,
-                       run.s.get("min_reward_risk"))
+                       **self.risk_args(run))
         if not d.ok:  # market moved since the candle closed
             run.broker.set_status(pid, "rejected_on_fill")
             log.info("[%s] #%s %s not filled: %s", run.name, pid, p["pair"], d.reason)
@@ -188,6 +219,11 @@ class Bot:
         log.info("TRADE BUY [%s] #%s %s ~%.2f USD at %s stop %s target %s", run.name, pid,
                  p["pair"], qty * price, fmt(price), fmt(p["stop"]), fmt(p["target"]))
         hold = run.s.get("max_hold_min")
+        if run.s["type"] == "regime":
+            self.send(run, f"🟢 #{pid} paper BUY {p['pair']} ~{qty * price:.2f} USD at {fmt(price)}\n"
+                           f"Holds until a daily close below the {run.s['sma']}-day average "
+                           f"(disaster stop {fmt(p['stop'])}).\nWhy: {p['setup']}")
+            return
         self.send(run, f"🟢 #{pid} paper BUY {p['pair']} ~{qty * price:.2f} USD at {fmt(price)}\n"
                        f"Stop {fmt(p['stop'])} | Target {fmt(p['target'])} | R:R {d.reward_risk:.2f}"
                        + (f" | max {hold} min" if hold else "") +
@@ -251,15 +287,35 @@ class Bot:
         return text
 
     def ranking(self):
+        start = self.cfg["account"]["starting_equity"]
         rows = []
         for run in self.runners.values():
-            s = run.broker.stats()
-            rows.append((s["net_pnl"], run.name, s))
+            eq = run.broker.state(self.prices)["equity"]
+            rows.append((eq - start, run.name, run.broker.stats(), len(run.broker.open_positions())))
         rows.sort(key=lambda r: r[0], reverse=True)
-        lines = ["🏁 <b>Strategy ranking</b> (net P&L after fees)"]
-        for i, (pnl, name, s) in enumerate(rows, 1):
-            lines.append(f"{i}. {name}: {pnl:+.2f} | {s['closed_trades']} trades | "
+        lines = ["🏁 <b>Strategy ranking</b> (equity change incl. open positions, after fees)"]
+        for i, (chg, name, s, n_open) in enumerate(rows, 1):
+            lines.append(f"{i}. {name}: {chg:+.2f} | {s['closed_trades']} closed, {n_open} open | "
                          f"win {s['win_rate']:.0%} | exp {s['expectancy']:+.2f}")
+        return "\n".join(lines)
+
+    def go_live_text(self):
+        g = self.cfg.get("go_live", {})
+        min_t, max_dd = g.get("min_trades", 30), g.get("max_drawdown", 0.15)
+        lines = [f"🚦 <b>Go-live check</b> ({min_t}+ trades, positive expectancy, "
+                 f"drawdown under {max_dd:.0%})"]
+        for run in self.runners.values():
+            s = run.broker.stats()
+            if run.s["type"] == "regime":
+                lines.append(f"{run.name}: judged on multi-year history, not trade count "
+                             f"({s['closed_trades']} closed)")
+                continue
+            checks = [s["closed_trades"] >= min_t, s["expectancy"] > 0, s["max_drawdown"] <= max_dd]
+            mark = "✅ PASS" if all(checks) else "❌ not yet"
+            lines.append(f"{run.name}: {mark} | trades {s['closed_trades']}/{min_t} "
+                         f"{'✓' if checks[0] else '✗'} | exp {s['expectancy']:+.2f} "
+                         f"{'✓' if checks[1] else '✗'} | dd {s['max_drawdown']:.0%} "
+                         f"{'✓' if checks[2] else '✗'}")
         return "\n".join(lines)
 
     def log_summary(self):
@@ -293,7 +349,7 @@ class Bot:
         self.tg.send(f"📊 <b>Weekly report</b> - bot alive ✅\n"
                      f"Scans this week: {self.scans} | last scan {last} | open positions {open_n}\n"
                      f"Each strategy started with {self.cfg['account']['starting_equity']} USD.\n\n"
-                     + self.ranking())
+                     + self.ranking() + "\n\n" + self.go_live_text())
         self.meta._set("last_report", key)
         self.meta.db.commit()
         self.scans = 0

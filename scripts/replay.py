@@ -11,11 +11,45 @@ from bot import risk, strategy
 from bot.market import Market
 
 
+def replay_regime(name, s, m, fee):
+    """Trend filter: % return and worst drop vs simply holding the coin."""
+    for pair in s["pairs"]:
+        c = m.candles(pair, s["interval_min"])
+        cl = [x["close"] for x in c]
+        n = s["sma"]
+        if len(c) <= n + 10:
+            continue
+        eq, pos, peak, mdd, trades = 1.0, None, 1.0, 0.0, 0
+        for i in range(n, len(c)):
+            avg = sum(cl[i - n + 1:i + 1]) / n
+            if pos is None and cl[i] > avg:
+                pos, trades = cl[i], trades + 1
+            elif pos is not None:
+                stop = pos * (1 - s["stop_pct"])
+                exit_price = stop if c[i]["low"] <= stop else (cl[i] if cl[i] < avg else None)
+                if exit_price:
+                    eq *= exit_price * (1 - fee) / (pos * (1 + fee))
+                    pos = None
+            cur = eq * (cl[i] / pos if pos else 1)
+            peak, mdd = max(peak, cur), max(mdd, 1 - cur / max(peak, cur))
+        final = eq * (cl[-1] / pos if pos else 1)
+        hold = cl[-1] / cl[n]
+        hold_peak, hold_mdd = 0, 0
+        for x in cl[n:]:
+            hold_peak = max(hold_peak, x)
+            hold_mdd = max(hold_mdd, 1 - x / hold_peak)
+        print(f"{name:10s} {pair} {len(c) - n} days | {trades} trades | {final - 1:+.0%}, "
+              f"worst drop {mdd:.0%} | just holding: {hold - 1:+.0%}, worst drop {hold_mdd:.0%}")
+
+
 def replay(cfg):
     m = Market(cfg["exchange"]["base_url"], cfg["exchange"].get("region", "EEA"))
     fee, ind = cfg["exchange"]["fee_rate"], cfg["indicators"]
     cache = {}
     for name, s in cfg["strategies"].items():
+        if s["type"] == "regime":
+            replay_regime(name, s, m, fee)
+            continue
         iv = s["interval_min"]
         trades, span_days = [], 0.0
         for pair in cfg["exchange"]["pairs"]:

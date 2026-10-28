@@ -30,14 +30,17 @@ def size(entry, stop, equity, r):
     return min(qty, cap)
 
 
-def check(setup, state, r, fee, min_rr=None):
+def check(setup, state, r, fee, min_rr=None, position_pct=None, max_dd=None):
     """r: shared risk rules. state: equity, cash, peak, day_start_equity, killed, open_pairs.
-    min_rr: per-strategy override of r['min_reward_risk']."""
+    min_rr: per-strategy override of r['min_reward_risk'].
+    position_pct: allocation sizing (trend filter) instead of 1%-risk sizing; skips the R:R rule.
+    max_dd: per-strategy override of r['max_drawdown_kill']."""
     min_rr = r["min_reward_risk"] if min_rr is None else min_rr
+    max_dd = r["max_drawdown_kill"] if max_dd is None else max_dd
 
     if state["killed"]:
         return Decision(False, "kill switch active (max drawdown hit) - send /resetkill after review")
-    if state["peak"] > 0 and state["equity"] <= state["peak"] * (1 - r["max_drawdown_kill"]):
+    if state["peak"] > 0 and state["equity"] <= state["peak"] * (1 - max_dd):
         return Decision(False, "max drawdown reached - kill switch")
     if state["equity"] <= state["day_start_equity"] * (1 - r["daily_loss_halt"]):
         return Decision(False, "daily loss limit hit - paused until tomorrow (UTC)")
@@ -48,11 +51,14 @@ def check(setup, state, r, fee, min_rr=None):
     if not (setup["stop"] < setup["entry"] < setup["target"]):
         return Decision(False, "invalid levels")
 
-    rr = reward_risk_after_fees(setup["entry"], setup["stop"], setup["target"], fee)
-    if rr < min_rr:
-        return Decision(False, f"reward:risk {rr:.2f} after fees is below {min_rr}")
-
-    qty = size(setup["entry"], setup["stop"], state["equity"], r)
+    if position_pct:
+        rr = 0.0
+        qty = state["equity"] * position_pct / setup["entry"]
+    else:
+        rr = reward_risk_after_fees(setup["entry"], setup["stop"], setup["target"], fee)
+        if rr < min_rr:
+            return Decision(False, f"reward:risk {rr:.2f} after fees is below {min_rr}")
+        qty = size(setup["entry"], setup["stop"], state["equity"], r)
     if qty * setup["entry"] * (1 + fee) > state["cash"]:
         qty = state["cash"] / (setup["entry"] * (1 + fee))
     if qty * setup["entry"] < 5:  # dust guard

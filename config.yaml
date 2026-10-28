@@ -7,12 +7,13 @@ exchange:
   pairs: [BTC-USD, ETH-USD, SOL-USD, XRP-USD, ADA-USD, DOGE-USD, LINK-USD, AVAX-USD,
           DOT-USD, LTC-USD, BNB-USD, TRX-USD, SUI-USD]
   # Most alts are thin on Revolut X (<$150k/day): real fills would be worse than paper.
+  min_volume_usd_24h: 100000  # skip coins too thin to trade for real (checked every scan)
   fee_rate: 0.0009         # Revolut X taker fee, charged on BOTH sides (maker is 0%, but paper can't model limit fills honestly)
 
 account:
   starting_equity: 200     # paper USD, per strategy
 
-# Shared risk rules. A strategy can override min_reward_risk only.
+# Shared risk rules. Strategies may override min_reward_risk, position_pct, max_drawdown_kill.
 risk:
   risk_per_trade: 0.01     # 1% of that strategy's equity lost if the stop hits
   min_reward_risk: 2.0     # after fees
@@ -21,8 +22,18 @@ risk:
   daily_loss_halt: 0.03    # -3% in a day -> that strategy pauses until tomorrow (UTC)
   max_drawdown_kill: 0.10  # -10% from peak -> kill switch for that strategy, /resetkill to resume
 
-# Four strategies compete, each with its own $200 paper account.
+# Five strategies compete, each with its own $200 paper account.
 strategies:
+  trend_daily:             # long-term trend filter: hold BTC/ETH while above the 200-day average
+    type: regime
+    interval_min: 1440
+    pairs: [BTC-USD, ETH-USD]
+    sma: 200
+    position_pct: 0.5      # half the account per coin, no 1%-risk sizing
+    stop_pct: 0.20         # disaster stop only; normal exit = daily close below the average
+    max_drawdown_kill: 0.35  # crypto swings 30%+ inside a trend; 10% would kill it constantly
+    llm_review: false
+
   trend_4h:                # baseline: buy dips in an uptrend, rarely trades
     type: trend
     interval_min: 240
@@ -75,6 +86,10 @@ indicators:
 
 schedule:
   monitor_every_sec: 30    # stop / target / time-exit checks on open positions
+
+go_live:                   # shown in the Sunday report; all must pass before any real money
+  min_trades: 30
+  max_drawdown: 0.15
 
 report:                    # weekly Telegram report = heartbeat. No report on Sunday = bot is down.
   weekday: 6               # 0=Mon ... 6=Sun

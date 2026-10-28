@@ -219,6 +219,7 @@ def make_bot(tmp_path, only=("trend_4h",), verdict="approve", manual=True, candl
     cfg["approval"]["required"] = manual
     cfg["data_dir"] = str(tmp_path)
     cfg["exchange"]["pairs"] = ["BTC-USD"]
+    cfg["exchange"]["min_volume_usd_24h"] = 0
     cfg["strategies"] = {k: v for k, v in cfg["strategies"].items() if k in only}
     tg = FakeTG()
     mkt = FakeMarket(candles or first_setup(make_candles(), S["trend_4h"]))
@@ -342,3 +343,83 @@ def test_scan_schedule_aligns_to_candle_close():
     r = Runner("x", {"interval_min": 15}, None)
     r.schedule_next(1_000_000)  # 1_000_000 s -> next 900 s boundary is 1_000_800
     assert r.next_scan == 1_000_815
+
+
+# --- daily trend filter, liquidity, go-live ---------------------------------
+def daily(closes, interval=1440, vol=1e9):
+    start = int(time.time() * 1000) - (len(closes) + 2) * interval * 60_000
+    return [{"start": start + i * interval * 60_000, "open": c, "high": c * 1.01,
+             "low": c * 0.99, "close": c, "volume": vol / c} for i, c in enumerate(closes)]
+
+
+def test_regime_entry_and_exit_signal():
+    s = S["trend_daily"]
+    up = daily([100 + i * 0.5 for i in range(220)])
+    found = strategy.find_setup("BTC-USD", up, s, IND)
+    assert found and found["stop"] == pytest.approx(found["entry"] * 0.8)
+    assert not strategy.exit_signal(up, s)
+    down = daily([100 + i * 0.5 for i in range(220)] + [100] * 5)
+    assert strategy.find_setup("BTC-USD", down, s, IND) is None
+    assert strategy.exit_signal(down, s)
+    assert strategy.find_setup("BTC-USD", up[:150], s, IND) is None  # not enough history
+
+
+def test_regime_sizing_ignores_rr_and_uses_allocation():
+    d = risk.check(setup(entry=100, stop=80, target=10_000), base_state(), R, FEE,
+                   position_pct=0.5, max_dd=0.35)
+    assert d.ok and d.qty == pytest.approx(1.0)  # 50% of 200 / 100
+    # 20% drawdown would kill a normal strategy but not the trend filter
+    st = base_state(equity=160.0, day_start_equity=160.0)
+    assert not risk.check(setup(), st, R, FEE).ok
+    assert risk.check(setup(entry=100, stop=80, target=10_000), st, R, FEE,
+                      position_pct=0.5, max_dd=0.35).ok
+
+
+def test_regime_full_cycle(tmp_path):
+    up = daily([100 + i * 0.5 for i in range(220)])
+    bot, tg, mkt = make_bot(tmp_path, only=("trend_daily",), manual=False, candles=up)
+    run = bot.runners["trend_daily"]
+    run.s["pairs"] = ["BTC-USD"]  # fake market returns the same candles for every pair
+    bot.scan(run)
+    pos = run.broker.open_positions()
+    assert len(pos) == 1 and pos[0]["qty"] * pos[0]["entry"] == pytest.approx(100, rel=0.01)
+    assert "Holds until a daily close below" in tg.sent[-1][0]
+    run.last_candle = {}
+    bot.scan(run)  # still above average: no second buy, no exit
+    assert len(run.broker.open_positions()) == 1
+    mkt.c = daily([100 + i * 0.5 for i in range(220)] + [100] * 5)
+    mkt.price = 100
+    bot._candles.clear()  # next day: fresh candles
+    bot.scan(run)
+    assert run.broker.open_positions() == []
+    assert "trend ended" in tg.sent[-1][0]
+
+
+def test_liquidity_filter_skips_thin_pairs(tmp_path):
+    thin = daily([100 + i * 0.5 for i in range(220)], vol=50_000)
+    bot, tg, _ = make_bot(tmp_path, only=("trend_daily",), manual=False, candles=thin)
+    bot.cfg["exchange"]["min_volume_usd_24h"] = 100_000
+    bot.scan(bot.runners["trend_daily"])
+    assert bot.runners["trend_daily"].broker.open_positions() == []
+    assert strategy.quote_volume_24h(thin, 1440) == pytest.approx(50_000)
+
+
+def test_max_drawdown_stat_and_go_live(tmp_path):
+    bot, tg, _ = make_bot(tmp_path, only=("trend_4h", "trend_daily"))
+    b = bot.runners["trend_4h"].broker
+    b.sell(opened(b, qty=1.0)["id"], 120, "t")   # +20 -> 220
+    b.sell(opened(b, qty=1.0)["id"], 80, "t")    # -20 -> 200, dd 9.1%
+    s = b.stats()
+    assert s["max_drawdown"] == pytest.approx(20 / 220, rel=0.02)  # small fee effect
+    text = bot.go_live_text()
+    assert "trend_4h: ❌ not yet" in text and "trades 2/30" in text
+    assert "trend_daily: judged on multi-year history" in text
+
+
+def test_ranking_counts_open_positions(tmp_path):
+    bot, tg, _ = make_bot(tmp_path, only=("trend_4h", "bounce_1h"))
+    b = bot.runners["bounce_1h"].broker
+    opened(b, qty=1.0, price=100.0)
+    bot.prices["BTC-USD"] = 130.0  # +30 unrealised
+    text = bot.ranking()
+    assert text.index("bounce_1h") < text.index("trend_4h") and "1 open" in text

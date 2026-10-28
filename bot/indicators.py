@@ -11,6 +11,12 @@ def ema(values, period):
     return out  # aligned to values[period-1:]
 
 
+def sma(values, period):
+    if len(values) < period:
+        return None
+    return sum(values[-period:]) / period
+
+
 def rsi(closes, period=14):
     """Wilder's RSI. Returns the latest value or None."""
     if len(closes) < period + 1:
