@@ -97,6 +97,8 @@ class Bot:
                 for pos, why, pnl in run.broker.check_exits(pair, last, high, low,
                                                             run.s.get("max_hold_min")):
                     icon = "✅" if pnl > 0 else "🛑"
+                    log.info("TRADE EXIT [%s] %s %s entry %s P&L %+.2f", run.name, pair, why,
+                             fmt(pos["entry"]), pnl)
                     self.send(run, f"{icon} <b>{pair}</b> closed ({why}): P&L {pnl:+.2f} USD")
             st = run.broker.state(self.prices)
             if not st["killed"] and st["equity"] <= st["peak"] * (1 - dd):
@@ -178,10 +180,13 @@ class Bot:
                        run.s.get("min_reward_risk"))
         if not d.ok:  # market moved since the candle closed
             run.broker.set_status(pid, "rejected_on_fill")
+            log.info("[%s] #%s %s not filled: %s", run.name, pid, p["pair"], d.reason)
             self.send(run, f"#{pid} {p['pair']} not filled: {d.reason}")
             return
         qty = run.broker.buy(pid, price)
         run.broker.set_status(pid, "filled")
+        log.info("TRADE BUY [%s] #%s %s ~%.2f USD at %s stop %s target %s", run.name, pid,
+                 p["pair"], qty * price, fmt(price), fmt(p["stop"]), fmt(p["target"]))
         hold = run.s.get("max_hold_min")
         self.send(run, f"🟢 #{pid} paper BUY {p['pair']} ~{qty * price:.2f} USD at {fmt(price)}\n"
                        f"Stop {fmt(p['stop'])} | Target {fmt(p['target'])} | R:R {d.reward_risk:.2f}"
@@ -257,6 +262,14 @@ class Bot:
                          f"win {s['win_rate']:.0%} | exp {s['expectancy']:+.2f}")
         return "\n".join(lines)
 
+    def log_summary(self):
+        for run in self.runners.values():
+            st, s = run.broker.state(self.prices), run.broker.stats()
+            opens = ", ".join(f"{p['pair']}@{fmt(p['entry'])}" for p in run.broker.open_positions())
+            log.info("SUMMARY [%s] equity %.2f | closed %d | net %+.2f | open: %s%s", run.name,
+                     st["equity"], s["closed_trades"], s["net_pnl"], opens or "none",
+                     " | KILLED" if st["killed"] else "")
+
     # --- weekly report ---------------------------------------------------------
     def report_due(self, now=None):
         r = self.cfg.get("report")
@@ -299,12 +312,17 @@ class Bot:
         names = ", ".join(self.runners)
         self.tg.send(f"🤖 Bot started in PAPER mode. Strategies: {names}\n/status /stats")
         next_monitor = 0.0
+        self.log_summary()
+        next_summary = time.time() + 6 * 3600
         while True:
             now = time.time()
             try:
                 self.handle_telegram()
                 self.expire()
                 self.weekly_report()
+                if now >= next_summary:
+                    self.log_summary()
+                    next_summary = now + 6 * 3600
                 if now >= next_monitor:
                     self.monitor()
                     next_monitor = now + self.cfg["schedule"]["monitor_every_sec"]

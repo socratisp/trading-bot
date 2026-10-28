@@ -1,6 +1,7 @@
 """Minimal Telegram client: send proposals with Approve/Reject buttons,
 read button taps and a few commands. Only your own chat is obeyed."""
 import logging
+import time
 
 import requests
 
@@ -27,6 +28,10 @@ class Telegram:
             payload["reply_markup"] = {"inline_keyboard": [buttons]}
         try:
             r = requests.post(f"{self.base}/sendMessage", json=payload, timeout=20)
+            if r.status_code == 429:  # Telegram rate limit: wait and retry once
+                wait = r.json().get("parameters", {}).get("retry_after", 5)
+                time.sleep(min(wait, 30))
+                r = requests.post(f"{self.base}/sendMessage", json=payload, timeout=20)
             if not r.ok:
                 log.error("telegram send failed: %s", r.text[:200])
         except requests.RequestException as exc:
@@ -44,9 +49,12 @@ class Telegram:
             log.warning("telegram poll failed: %s", exc)
             return []
         if not data.get("ok"):
-            if not self._warned:
-                log.error("TELEGRAM ERROR: %s - check TELEGRAM_BOT_TOKEN",
-                          data.get("description", "unknown"))
+            desc = data.get("description", "unknown")
+            if data.get("error_code") == 429:
+                log.warning("telegram rate limit: %s", desc)
+            elif not self._warned:
+                hint = " - check TELEGRAM_BOT_TOKEN" if data.get("error_code") == 401 else ""
+                log.error("TELEGRAM ERROR: %s%s", desc, hint)
                 self._warned = True
             return []
         self._warned = False
