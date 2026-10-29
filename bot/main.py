@@ -121,6 +121,10 @@ class Bot:
                              fmt(pos["entry"]), pnl)
                     self.exit_report(run, pos["id"],
                                      f"{icon} <b>{pair}</b> closed ({why}): P&L {pnl:+.2f} USD")
+                if run.s.get("breakeven_at"):
+                    for pos in run.broker.move_to_breakeven(pair, high, run.s["breakeven_at"]):
+                        log.info("STOP MOVED [%s] %s to breakeven %s", run.name, pair,
+                                 fmt(pos["stop"]))
             st = run.broker.state(self.prices)
             if not st["killed"] and st["equity"] <= st["peak"] * (1 - dd):
                 run.broker.kill()

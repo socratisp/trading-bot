@@ -139,12 +139,29 @@ class PaperBroker:
             if pos["pair"] != pair:
                 continue
             if low <= pos["stop"]:
-                closed.append((pos, "stop", self.sell(pos["id"], pos["stop"], "stop")))
+                why = "breakeven" if pos["stop"] >= pos["entry"] else "stop"
+                closed.append((pos, why, self.sell(pos["id"], pos["stop"], why)))
             elif high >= pos["target"]:
                 closed.append((pos, "target", self.sell(pos["id"], pos["target"], "target")))
             elif max_hold_min and now - pos["opened_ts"] >= max_hold_min * 60:
                 closed.append((pos, "time", self.sell(pos["id"], last, "time")))
         return closed
+
+    def move_to_breakeven(self, pair, high, trigger):
+        """Once price has covered `trigger` (e.g. 0.5) of the way to the target, raise the
+        stop to the buy price plus both fees, so a reversal ends at about zero.
+        Returns the positions that were moved."""
+        moved = []
+        for pos in self.open_positions():
+            if pos["pair"] != pair or pos["stop"] >= pos["entry"]:
+                continue
+            if high >= pos["entry"] + (pos["target"] - pos["entry"]) * trigger:
+                be = pos["entry"] * (1 + self.fee) / (1 - self.fee)
+                self.db.execute("UPDATE positions SET stop=? WHERE id=?", (be, pos["id"]))
+                moved.append({**pos, "stop": be})
+        if moved:
+            self.db.commit()
+        return moved
 
     def position(self, position_id):
         row = self.db.execute("SELECT * FROM positions WHERE id=?", (position_id,)).fetchone()

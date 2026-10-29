@@ -481,3 +481,35 @@ def test_tradecharts_caps_output(tmp_path):
     bot.command(["/tradecharts", "30d"])
     assert "25 closed trade(s)" in tg.sent[0][0] and "latest 20" in tg.sent[0][0]
     assert len(tg.sent) == 21
+
+
+def test_breakeven_moves_stop_and_exits_flat(tmp_path):
+    b = PaperBroker(str(tmp_path / "t.sqlite"), 200, 0.0009)
+    pos = opened(b, qty=0.4, price=100.0, stop=95.0, target=110.0)
+    assert b.move_to_breakeven("BTC-USD", 104.9, 0.5) == []      # not halfway yet
+    moved = b.move_to_breakeven("BTC-USD", 105.0, 0.5)
+    assert len(moved) == 1 and moved[0]["stop"] == pytest.approx(100 * 1.0009 / 0.9991)
+    assert b.move_to_breakeven("BTC-USD", 108, 0.5) == []        # only once
+    closed = b.check_exits("BTC-USD", 99, 100, 99)
+    assert closed[0][1] == "breakeven"
+    assert abs(closed[0][2]) < 0.001                              # about zero after fees
+
+
+def test_breakeven_only_for_configured_strategy(tmp_path):
+    c = first_setup(make_candles(), S["trend_4h"])
+    bot, tg, mkt = make_bot(tmp_path, only=("trend_1h", "trend_1h_be"), manual=False, candles=c)
+    for run in bot.runners.values():
+        bot.scan(run)
+    plain, be = bot.runners["trend_1h"].broker, bot.runners["trend_1h_be"].broker
+    if not plain.open_positions():
+        pytest.skip("synthetic data gave no 1h setup")
+    p = be.open_positions()[0]
+    mkt.price = mkt.hi = p["entry"] + (p["target"] - p["entry"]) * 0.6
+    mkt.lo = p["entry"]
+    bot.monitor()
+    assert be.open_positions()[0]["stop"] > p["entry"]
+    assert plain.open_positions()[0]["stop"] < p["entry"]
+    mkt.price = mkt.hi = mkt.lo = p["entry"] * 0.999
+    bot.monitor()
+    assert be.open_positions() == [] and "breakeven" in tg.sent[-1][0]
+    assert len(plain.open_positions()) == 1

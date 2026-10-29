@@ -77,15 +77,19 @@ def replay(cfg):
                 entry = c[e + 1]["open"]
                 max_bars = max(1, s["max_hold_min"] // iv) if s.get("max_hold_min") else 10 ** 9
                 result = None
+                stop = st["stop"]
+                be_at = s.get("breakeven_at")
                 for k in range(e + 1, len(c)):
                     b = c[k]
-                    if b["low"] <= st["stop"]:
-                        exit_price = st["stop"]
+                    if b["low"] <= stop:
+                        exit_price = stop
                     elif b["high"] >= st["target"]:
                         exit_price = st["target"]
                     elif k - e >= max_bars:
                         exit_price = b["close"]
                     else:
+                        if be_at and stop < entry and b["high"] >= entry + (st["target"] - entry) * be_at:
+                            stop = entry * (1 + fee) / (1 - fee)
                         continue
                     pnl = (exit_price * (1 - fee) - entry * (1 + fee)) / entry
                     result = pnl / ((entry - st["stop"]) / entry)

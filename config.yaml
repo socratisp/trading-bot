@@ -22,7 +22,7 @@ risk:
   daily_loss_halt: 0.03    # -3% in a day -> that strategy pauses until tomorrow (UTC)
   max_drawdown_kill: 0.10  # -10% from peak -> kill switch for that strategy, /resetkill to resume
 
-# Five strategies compete, each with its own $200 paper account.
+# Six strategies compete, each with its own $200 paper account.
 strategies:
   trend_daily:             # long-term trend filter: hold BTC/ETH while above the 200-day average
     type: regime
@@ -56,6 +56,19 @@ strategies:
     target_atr_mult: 3.5
     min_reward_risk: 1.5   # fees eat more on small moves; 2.0 would block almost every trade
     llm_review: true
+
+  trend_1h_be:             # identical to trend_1h, plus: halfway to target -> stop moves to buy price
+    type: trend
+    interval_min: 60
+    ema_fast: 50
+    ema_slow: 200
+    rsi_min: 35
+    rsi_max: 50
+    stop_atr_mult: 1.5
+    target_atr_mult: 3.5
+    min_reward_risk: 1.5
+    breakeven_at: 0.5      # fraction of the way to the target
+    llm_review: false      # no news veto, so it can't differ from trend_1h for that reason
 
   bounce_1h:               # buys sharp drops (works in downtrends) - most likely to lose
     type: bounce
