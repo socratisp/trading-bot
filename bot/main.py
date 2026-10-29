@@ -276,15 +276,7 @@ class Bot:
     def command(self, words):
         cmd, arg = words[0].lower(), (words[1].lower() if len(words) > 1 else None)
         if cmd == "/status":
-            lines = []
-            for run in self.runners.values():
-                st = run.broker.state(self.prices)
-                lines.append(f"<b>{run.name}</b>: equity {st['equity']:.2f}"
-                             + (" ⛔ KILLED" if st["killed"] else ""))
-                for pos in run.broker.open_positions():
-                    lines.append(f"  {pos['pair']} @ {fmt(pos['entry'])} stop {fmt(pos['stop'])} "
-                                 f"target {fmt(pos['target'])}")
-            self.tg.send("\n".join(lines))
+            self.tg.send(self.status_text())
         elif cmd == "/stats":
             if arg in self.runners:
                 self.tg.send(f"<b>{arg}</b>\n" + self.stats_text(self.runners[arg], detail=True))
@@ -303,6 +295,73 @@ class Bot:
                          "/tradecharts  (last 10 trades)\n/tradecharts 7d\n"
                          "/tradecharts 2026-10-01 2026-10-28\n/tradecharts trend_4h 7d\n"
                          "/resetkill [strategy|all]")
+
+    ABOUT = {
+        "regime": "Holds {pairs} while the price is above its {sma}-day average. Checks once a day.",
+        "trend": "Buys small dips while a coin is rising. Checks every {iv}.",
+        "bounce": "Buys after a sharp drop, hoping for a quick bounce. Checks every {iv}.",
+    }
+
+    def about(self, run):
+        s = run.s
+        iv = s["interval_min"]
+        iv_txt = f"{iv // 60} hours" if iv >= 120 else ("hour" if iv == 60 else f"{iv} minutes")
+        text = self.ABOUT.get(s["type"], "").format(
+            pairs=" and ".join(p.split("-")[0] for p in s.get("pairs", [])), sma=s.get("sma"),
+            iv=iv_txt)
+        if s.get("breakeven_at"):
+            text += " Halfway to the target, it moves the stop up so the trade can't lose."
+        return text
+
+    def status_text(self):
+        start = self.cfg["account"]["starting_equity"]
+        pairs = {p["pair"] for r in self.runners.values() for p in r.broker.open_positions()}
+        for pair in pairs:  # fresh prices for everything we hold
+            try:
+                self.prices[pair] = self.market.last_price(pair)[0]
+            except Exception as exc:
+                log.warning("price failed %s: %s", pair, exc)
+        tz = ZoneInfo(self.cfg.get("report", {}).get("timezone", "UTC"))
+        now = datetime.now(tz).strftime("%d %b %H:%M")
+        total = sum(r.broker.state(self.prices)["equity"] for r in self.runners.values())
+        total_start = start * len(self.runners)
+        chg = total - total_start
+        lines = [f"📊 <b>Bot status</b> ({now}) - PAPER money, nothing real",
+                 f"All strategies: <b>${total:,.2f}</b> (started ${total_start:,.0f}) "
+                 f"{'🟢' if chg >= 0 else '🔴'} {chg:+.2f} ({chg / total_start:+.1%})", ""]
+        for run in self.runners.values():
+            st = run.broker.state(self.prices)
+            c = st["equity"] - start
+            head = f"{'🟢' if c >= 0 else '🔴'} <b>{run.name}</b>: ${st['equity']:.2f} ({c:+.2f})"
+            if st["killed"]:
+                head += "\n   ⛔ STOPPED: lost too much. Send /resetkill " + run.name + " to restart."
+            elif st["equity"] <= st["day_start_equity"] * (1 - self.cfg["risk"]["daily_loss_halt"]):
+                head += "\n   ⏸ Paused for today after losses. Resumes tomorrow."
+            lines += [head, f"   <i>{self.about(run)}</i>"]
+            opens = run.broker.open_positions()
+            if not opens:
+                lines.append("   No open trades. Waiting for a setup.")
+            for pos in opens:
+                coin = pos["pair"].split("-")[0]
+                now_px = self.prices.get(pos["pair"], pos["entry"])
+                pnl = pos["qty"] * (now_px - pos["entry"])
+                pct = now_px / pos["entry"] - 1
+                lines.append(f"   {'📈' if pnl >= 0 else '📉'} <b>{coin}</b>: bought at {fmt(pos['entry'])}, "
+                             f"now <b>{fmt(now_px)}</b> ({pct:+.2%}) → {pnl:+.2f} USD")
+                to_stop = now_px / pos["stop"] - 1
+                if pos["stop"] >= pos["entry"]:
+                    stop_txt = f"safety exit at {fmt(pos['stop'])} (can't lose anymore)"
+                else:
+                    stop_txt = f"sells at a loss below {fmt(pos['stop'])} ({to_stop:.1%} away)"
+                if pos["target"] < pos["entry"] * 3:
+                    to_target = pos["target"] / now_px - 1
+                    lines.append(f"      🎯 takes profit at {fmt(pos['target'])} ({to_target:+.1%} away)")
+                else:
+                    lines.append(f"      🎯 no fixed target: holds while the trend lasts")
+                lines.append(f"      🛑 {stop_txt}")
+            lines.append("")
+        lines.append("Past trades: /tradecharts  •  Results: /stats  •  Help: /help")
+        return "\n".join(lines)
 
     MAX_CHARTS = 20
 

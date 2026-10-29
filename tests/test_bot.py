@@ -522,3 +522,26 @@ def test_breakeven_only_for_configured_strategy(tmp_path):
     bot.monitor()
     assert be.open_positions() == [] and "breakeven" in tg.sent[-1][0]
     assert len(plain.open_positions()) == 1
+
+
+def test_status_is_readable(tmp_path):
+    bot, tg, mkt = make_bot(tmp_path, only=("trend_4h", "trend_1h_be"), manual=False)
+    bot.scan(bot.runners["trend_4h"])
+    pos = bot.runners["trend_4h"].broker.open_positions()[0]
+    mkt.price = pos["entry"] * 1.01
+    bot.command(["/status"])
+    text = tg.sent[-1][0]
+    assert "PAPER money" in text and "All strategies" in text
+    assert "bought at" in text and "now <b>" in text and "+1.00%" in text
+    assert "takes profit at" in text and "sells at a loss below" in text
+    assert "trend_1h_be" in text and "No open trades" in text and "can't lose" in text
+
+
+def test_status_regime_has_no_target(tmp_path):
+    up = daily([100 + i * 0.5 for i in range(220)])
+    bot, tg, _ = make_bot(tmp_path, only=("trend_daily",), manual=False, candles=up)
+    bot.runners["trend_daily"].s["pairs"] = ["BTC-USD"]
+    bot.scan(bot.runners["trend_daily"])
+    bot.command(["/status"])
+    assert "holds while the trend lasts" in tg.sent[-1][0]
+    assert "Holds BTC while the price is above its 200-day average" in tg.sent[-1][0]
