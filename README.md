@@ -4,7 +4,7 @@ Rules-based crypto bot for Revolut X. Code finds setups and sets entry, stop,
 target and size. Claude can only veto on news. You approve every trade in Telegram.
 **Paper trading only. There is no live order code in this version.**
 
-## Six competing strategies (each has its own $200 paper account)
+## Five competing strategies (each has its own $200 paper account)
 | name | candles | buys when | exits |
 |---|---|---|---|
 | trend_daily | 1 day | BTC/ETH daily close above 200-day average (50% of account each) | daily close below the average, or -20% disaster stop |
@@ -12,7 +12,6 @@ target and size. Claude can only veto on news. You approve every trade in Telegr
 | trend_1h | 1h | same rules on hourly candles | same, min R:R 1.5 |
 | trend_1h_be | 1h | same as trend_1h | same, but halfway to target the stop moves to the buy price |
 | bounce_1h | 1h | oversold (RSI < 30) + first green candle | stop 1.5 / target 3.0 ATR, min R:R 1.3 |
-| scalp_15m | 15m | EMA20 > EMA50 + dip | stop 1.5 / target 3.0 ATR, max 20 min hold, 90 min cooldown per coin |
 
 Coins with under $100k traded in the last 24h are skipped automatically.
 Shared rules: 1% risk per trade, max 2 positions per strategy, max 30% per coin,

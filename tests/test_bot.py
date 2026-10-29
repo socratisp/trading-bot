@@ -16,6 +16,10 @@ R = CFG["risk"]
 FEE = CFG["exchange"]["fee_rate"]
 IND = CFG["indicators"]
 S = CFG["strategies"]
+# Time-exit + cooldown are still supported features; keep a config to test them.
+SCALP = {"type": "trend", "interval_min": 15, "ema_fast": 20, "ema_slow": 50, "rsi_min": 35,
+         "rsi_max": 50, "stop_atr_mult": 1.5, "target_atr_mult": 3.0, "min_reward_risk": 1.0,
+         "max_hold_min": 20, "cooldown_min": 90, "llm_review": False}
 
 
 def make_candles(n=300, interval=240, trend=0.002, wobble=0.03, base=100.0):
@@ -218,12 +222,13 @@ class FakeTG:
         return q
 
 
-def make_bot(tmp_path, only=("trend_4h",), verdict="approve", manual=True, candles=None):
+def make_bot(tmp_path, only=("trend_4h",), verdict="approve", manual=True, candles=None, extra=None):
     cfg = copy.deepcopy(CFG)
     cfg["approval"]["required"] = manual
     cfg["data_dir"] = str(tmp_path)
     cfg["exchange"]["pairs"] = ["BTC-USD"]
     cfg["exchange"]["min_volume_usd_24h"] = 0
+    cfg["strategies"].update(copy.deepcopy(extra or {}))
     cfg["strategies"] = {k: v for k, v in cfg["strategies"].items() if k in only}
     tg = FakeTG()
     mkt = FakeMarket(candles or first_setup(make_candles(), S["trend_4h"]))
@@ -289,8 +294,9 @@ def test_strategies_have_separate_accounts(tmp_path):
 
 
 def test_scalp_time_exit_then_cooldown(tmp_path):
-    c = first_setup(noisy_uptrend(), S["scalp_15m"], start=60)
-    bot, tg, mkt = make_bot(tmp_path, only=("scalp_15m",), manual=False, candles=c)
+    c = first_setup(noisy_uptrend(), SCALP, start=60)
+    bot, tg, mkt = make_bot(tmp_path, only=("scalp_15m",), manual=False, candles=c,
+                            extra={"scalp_15m": SCALP})
     run = bot.runners["scalp_15m"]
     bot.scan(run)
     pos = run.broker.open_positions()[0]
