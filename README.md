@@ -4,14 +4,12 @@ Rules-based crypto bot for Revolut X. Code finds setups and sets entry, stop,
 target and size. Claude can only veto on news. You approve every trade in Telegram.
 **Paper trading only. There is no live order code in this version.**
 
-## Five competing strategies (each has its own $200 paper account)
+## Three competing strategies (each has its own $200 paper account)
 | name | candles | buys when | exits |
 |---|---|---|---|
 | trend_daily | 1 day | BTC/ETH daily close above 200-day average (50% of account each) | daily close below the average, or -20% disaster stop |
 | trend_4h | 4h | uptrend (EMA50 > EMA200) + dip (RSI 35-50) | stop 1.5 ATR / target 3.5 ATR |
-| trend_1h | 1h | same rules on hourly candles | same, min R:R 1.5 |
-| trend_1h_be | 1h | same as trend_1h | same, but halfway to target the stop moves to the buy price |
-| bounce_1h | 1h | oversold (RSI < 30) + first green candle | stop 1.5 / target 3.0 ATR, min R:R 1.3 |
+| trend_1h_be | 1h | uptrend (EMA50 > EMA200) + dip (RSI 35-50) | stop 1.5 / target 3.5 ATR; halfway to target the stop moves to the buy price |
 
 Coins with under $100k traded in the last 24h are skipped automatically.
 Shared rules: 1% risk per trade, max 2 positions per strategy, max 30% per coin,
@@ -28,7 +26,7 @@ multi-year replay instead, since it only trades a few times a year.
 `/resetkill trend_4h` or `/resetkill all`.
 Every closed trade arrives as a chart (buy, sell, stop, target).
 `/tradecharts` last 10 trades, `/tradecharts 7d`, `/tradecharts 2026-10-01 2026-10-28`,
-`/tradecharts trend_1h 7d` - max 20 charts per request. Weekly ranking every Sunday 18:00 (Cyprus).
+`/tradecharts trend_1h_be 7d` - max 20 charts per request. Weekly ranking every Sunday 18:00 (Cyprus).
 
 ## Replay on real history
 `python -m scripts.replay` - rough check of the rules on the last ~1000 candles.

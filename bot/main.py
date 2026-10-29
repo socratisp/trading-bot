@@ -301,7 +301,7 @@ class Bot:
         else:
             self.tg.send("Commands:\n/status\n/stats  or  /stats &lt;strategy&gt;\n"
                          "/tradecharts  (last 10 trades)\n/tradecharts 7d\n"
-                         "/tradecharts 2026-10-01 2026-10-28\n/tradecharts trend_1h 7d\n"
+                         "/tradecharts 2026-10-01 2026-10-28\n/tradecharts trend_4h 7d\n"
                          "/resetkill [strategy|all]")
 
     MAX_CHARTS = 20

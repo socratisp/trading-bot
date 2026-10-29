@@ -22,7 +22,7 @@ risk:
   daily_loss_halt: 0.03    # -3% in a day -> that strategy pauses until tomorrow (UTC)
   max_drawdown_kill: 0.10  # -10% from peak -> kill switch for that strategy, /resetkill to resume
 
-# Five strategies compete, each with its own $200 paper account.
+# Three strategies compete, each with its own $200 paper account.
 strategies:
   trend_daily:             # long-term trend filter: hold BTC/ETH while above the 200-day average
     type: regime
@@ -45,19 +45,7 @@ strategies:
     target_atr_mult: 3.5   # 3.0 = exactly 2:1 before fees, which always fails the 2:1 rule
     llm_review: true
 
-  trend_1h:                # same idea on hourly candles
-    type: trend
-    interval_min: 60
-    ema_fast: 50
-    ema_slow: 200
-    rsi_min: 35
-    rsi_max: 50
-    stop_atr_mult: 1.5
-    target_atr_mult: 3.5
-    min_reward_risk: 1.5   # fees eat more on small moves; 2.0 would block almost every trade
-    llm_review: true
-
-  trend_1h_be:             # identical to trend_1h, plus: halfway to target -> stop moves to buy price
+  trend_1h_be:             # hourly dip-buying in an uptrend, plus: halfway to target -> stop moves to buy price
     type: trend
     interval_min: 60
     ema_fast: 50
@@ -70,15 +58,7 @@ strategies:
     breakeven_at: 0.5      # fraction of the way to the target
     llm_review: false      # no news veto, so it can't differ from trend_1h for that reason
 
-  bounce_1h:               # buys sharp drops (works in downtrends) - most likely to lose
-    type: bounce
-    interval_min: 60
-    rsi_max: 30            # oversold
-    stop_atr_mult: 1.5
-    target_atr_mult: 3.0
-    min_reward_risk: 1.3
-    llm_review: false
-
+# trend_1h, bounce_1h removed 2026-10-29: replay -0.75R and -0.30R per trade; trend_1h lost both live trades.
 # scalp_15m removed 2026-10-29: as built it almost never traded (1 signal in ~9 days);
 # the fixed entry replayed at ~20 trades/day and -67R in 10 days. Short timeframes lose to fees + noise.
 

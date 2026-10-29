@@ -15,7 +15,9 @@ CFG = yaml.safe_load(open("config.yaml"))
 R = CFG["risk"]
 FEE = CFG["exchange"]["fee_rate"]
 IND = CFG["indicators"]
-S = CFG["strategies"]
+# Strategies removed from the live config but still used to test features.
+REMOVED = {'trend_1h': {'type': 'trend', 'interval_min': 60, 'ema_fast': 50, 'ema_slow': 200, 'rsi_min': 35, 'rsi_max': 50, 'stop_atr_mult': 1.5, 'target_atr_mult': 3.5, 'min_reward_risk': 1.5, 'llm_review': True}, 'bounce_1h': {'type': 'bounce', 'interval_min': 60, 'rsi_max': 30, 'stop_atr_mult': 1.5, 'target_atr_mult': 3.0, 'min_reward_risk': 1.3, 'llm_review': False}}
+S = {**REMOVED, **CFG["strategies"]}
 # Time-exit + cooldown are still supported features; keep a config to test them.
 SCALP = {"type": "trend", "interval_min": 15, "ema_fast": 20, "ema_slow": 50, "rsi_min": 35,
          "rsi_max": 50, "stop_atr_mult": 1.5, "target_atr_mult": 3.0, "min_reward_risk": 1.0,
@@ -228,6 +230,7 @@ def make_bot(tmp_path, only=("trend_4h",), verdict="approve", manual=True, candl
     cfg["data_dir"] = str(tmp_path)
     cfg["exchange"]["pairs"] = ["BTC-USD"]
     cfg["exchange"]["min_volume_usd_24h"] = 0
+    cfg["strategies"] = {**copy.deepcopy(REMOVED), **cfg["strategies"]}
     cfg["strategies"].update(copy.deepcopy(extra or {}))
     cfg["strategies"] = {k: v for k, v in cfg["strategies"].items() if k in only}
     tg = FakeTG()
